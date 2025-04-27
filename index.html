@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video player</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        /* Additional style for drop zone highlight */
+        .drag-over {
+            border-color: #3b82f6; /* Blue border */
+            background-color: #1e3a8a; /* Darker blue background for dark theme */
+        }
+        /* Inter font style */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Import Inter font */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+
+        /* Style for controls container */
+        .controls-container {
+            display: flex;
+            flex-wrap: wrap; /* Allow wrapping on smaller screens */
+            align-items: center;
+            justify-content: center; /* Center items */
+            margin-top: 1rem; /* mt-4 */
+            color: #d1d5db; /* gray-300 */
+            gap: 1rem; /* Spacing between control groups */
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem; /* Spacing within a group */
+        }
+        /* Basic styling for the range input */
+        input[type=range] {
+            cursor: pointer;
+            width: 120px; /* Adjust width */
+            accent-color: #3b82f6; /* Blue accent for slider */
+        }
+        /* Style for the value display spans */
+        .value-display {
+            min-width: 45px; /* Ensure space for text like "1.00x" or "100%" */
+            text-align: right;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        /* Style for buttons */
+        .control-button {
+             background-color: #4b5563; /* gray-600 */
+             color: #e5e7eb; /* gray-200 */
+             border: none;
+             padding: 0.4rem 0.8rem;
+             border-radius: 0.25rem; /* rounded-md */
+             cursor: pointer;
+             transition: background-color 0.2s;
+             font-size: 0.9em;
+        }
+        .control-button:hover {
+             background-color: #6b7280; /* gray-500 */
+        }
+         .control-button:disabled {
+             background-color: #374151; /* gray-700 */
+             color: #9ca3af; /* gray-400 */
+             cursor: not-allowed;
+         }
+        /* Style for file info */
+        #file-info {
+            margin-top: 1rem;
+            font-size: 0.9em;
+            color: #9ca3af; /* gray-400 */
+            word-break: break-all; /* Prevent long filenames from overflowing */
+        }
+        /* Hide default subtitle display (we might use custom later if needed) */
+        /* video::cue {
+             visibility: hidden;
+        } */
+    </style>
+</head>
+<body class="bg-gray-900 flex flex-col items-center justify-center min-h-screen p-4 md:p-6 font-sans">
+
+    <div class="bg-gray-800 p-4 md:p-8 rounded-lg shadow-md w-full max-w-4xl text-center">
+
+        <div id="drop-zone" class="border-4 border-dashed border-gray-600 rounded-lg p-6 md:p-10 mb-6 transition-colors duration-200 ease-in-out cursor-pointer">
+            <p id="drop-zone-text" class="text-gray-400 text-sm md:text-base">Drag & drop a video file here or click to select</p>
+        </div>
+
+        <div id="video-container" class="hidden mb-6">
+             <video id="video-player" controls crossorigin="anonymous" class="w-full rounded-lg bg-black">
+                 Your browser does not support the video tag.
+            </video>
+
+             <div class="controls-container">
+                 <div class="control-group">
+                    <label for="speed-slider" title="Playback Speed"><i class="fas fa-tachometer-alt"></i></label>
+                    <input type="range" id="speed-slider" min="0.25" max="2.5" step="0.05" value="1">
+                    <span id="speed-value" class="value-display">1.00x</span>
+                 </div>
+                  <div class="control-group">
+                    <label for="volume-slider" title="Volume"><i class="fas fa-volume-up"></i></label>
+                    <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+                    <span id="volume-value" class="value-display">100%</span>
+                 </div>
+                 <div class="control-group">
+                     <button id="pip-button" class="control-button" title="Picture-in-Picture (f)"><i class="fas fa-compress-alt"></i> PiP</button>
+                     <button id="load-subtitle-button" class="control-button" title="Load Subtitles (.vtt)"><i class="fas fa-closed-captioning"></i> Load VTT</button>
+                     <input type="file" id="subtitle-input" accept=".vtt" style="display: none;">
+                 </div>
+             </div>
+             <div id="file-info"></div>
+        </div>
+
+
+        <p id="error-message" class="text-red-500 mt-4 hidden"></p>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('drop-zone');
+        const videoContainer = document.getElementById('video-container');
+        const videoPlayer = document.getElementById('video-player');
+        const errorMessage = document.getElementById('error-message');
+        const speedSlider = document.getElementById('speed-slider');
+        const speedValueDisplay = document.getElementById('speed-value');
+        const volumeSlider = document.getElementById('volume-slider');
+        const volumeValueDisplay = document.getElementById('volume-value');
+        const pipButton = document.getElementById('pip-button');
+        const loadSubtitleButton = document.getElementById('load-subtitle-button');
+        const subtitleInput = document.getElementById('subtitle-input');
+        const fileInfoDisplay = document.getElementById('file-info');
+
+        let currentVideoFile = null; // Store the current File object
+
+        // --- LocalStorage Keys ---
+        const LS_VOLUME_KEY = 'videoPlayer_volume';
+        const LS_SPEED_KEY = 'videoPlayer_speed';
+        const LS_POSITION_PREFIX = 'videoPlayer_pos_'; // Prefix for position keys
+
+        // --- Initialization ---
+        function initializePlayer() {
+            // Load saved settings
+            const savedVolume = localStorage.getItem(LS_VOLUME_KEY);
+            const savedSpeed = localStorage.getItem(LS_SPEED_KEY);
+
+            if (savedVolume !== null) {
+                updateVolume(parseFloat(savedVolume));
+                volumeSlider.value = savedVolume;
+            } else {
+                 updateVolume(1); // Default volume
+                 volumeSlider.value = 1;
+            }
+
+            if (savedSpeed !== null) {
+                updatePlaybackSpeed(parseFloat(savedSpeed));
+                speedSlider.value = savedSpeed;
+            } else {
+                 updatePlaybackSpeed(1); // Default speed
+                 speedSlider.value = 1;
+            }
+
+            // Disable PiP button if not supported
+             if (!document.pictureInPictureEnabled) {
+                 pipButton.disabled = true;
+                 pipButton.title = "Picture-in-Picture not supported by your browser";
+             }
+        }
+
+        // --- Core Functions ---
+
+        // Function to handle file processing (Video)
+        function handleVideoFile(file) {
+            if (file && file.type.startsWith('video/')) {
+                currentVideoFile = file; // Store the file object
+
+                // Revoke previous object URL if it exists
+                if (videoPlayer.src && videoPlayer.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(videoPlayer.src);
+                }
+                 // Remove existing subtitle track if any
+                const existingTrack = videoPlayer.querySelector('track');
+                if (existingTrack) {
+                    videoPlayer.removeChild(existingTrack);
+                }
+
+
+                const fileURL = URL.createObjectURL(file);
+                videoPlayer.src = fileURL;
+                videoContainer.classList.remove('hidden');
+                errorMessage.classList.add('hidden');
+
+                // Reset speed/volume sliders visually (actual values loaded in initialize or kept)
+                // speedSlider.value = videoPlayer.playbackRate;
+                // volumeSlider.value = videoPlayer.volume;
+                // updatePlaybackSpeed(videoPlayer.playbackRate); // Update display too
+                // updateVolume(videoPlayer.volume); // Update display too
+
+                // Display file info (name initially, duration later)
+                fileInfoDisplay.textContent = `File: ${file.name}`;
+
+                // Load saved position for this file
+                loadSavedPosition(file.name);
+
+            } else {
+                currentVideoFile = null;
+                errorMessage.textContent = 'The dropped/selected file is not a valid video file.';
+                errorMessage.classList.remove('hidden');
+                fileInfoDisplay.textContent = ''; // Clear info
+            }
+        }
+
+        // Function to handle subtitle file processing (.vtt)
+        function handleSubtitleFile(file) {
+             if (file && (file.name.endsWith('.vtt'))) {
+                 if (!currentVideoFile) {
+                      errorMessage.textContent = 'Please load a video first before adding subtitles.';
+                      errorMessage.classList.remove('hidden');
+                      return;
+                 }
+                 errorMessage.classList.add('hidden'); // Hide error
+
+                 // Remove existing track before adding a new one
+                 const existingTrack = videoPlayer.querySelector('track');
+                 if (existingTrack) {
+                     videoPlayer.removeChild(existingTrack);
+                 }
+
+                 const reader = new FileReader();
+                 reader.onload = function(event) {
+                     const track = document.createElement('track');
+                     track.kind = 'subtitles';
+                     track.label = 'Loaded VTT';
+                     track.srclang = 'en'; // Assuming English, could be made dynamic
+                     // Use Blob URL for the track src for wider compatibility
+                     const blob = new Blob([event.target.result], {type: 'text/vtt'});
+                     track.src = URL.createObjectURL(blob);
+                     track.default = true; // Make it active by default
+                     videoPlayer.appendChild(track);
+                     videoPlayer.textTracks[0].mode = 'showing'; // Ensure it's visible
+
+                     // Optional: Revoke blob URL when track is removed or video changes? More complex.
+                 }
+                 reader.readAsText(file);
+
+             } else {
+                 errorMessage.textContent = 'Please select a valid .vtt subtitle file.';
+                 errorMessage.classList.remove('hidden');
+             }
+        }
+
+
+        // Function to update playback speed
+        function updatePlaybackSpeed(speed) {
+            const numericSpeed = parseFloat(speed);
+            if (!isNaN(numericSpeed)) {
+                videoPlayer.playbackRate = numericSpeed;
+                speedValueDisplay.textContent = numericSpeed.toFixed(2) + 'x';
+                localStorage.setItem(LS_SPEED_KEY, numericSpeed); // Save setting
+            }
+        }
+
+        // Function to update volume
+        function updateVolume(volume) {
+            const numericVolume = parseFloat(volume);
+            if (!isNaN(numericVolume)) {
+                videoPlayer.volume = numericVolume;
+                videoPlayer.muted = numericVolume === 0; // Auto-mute if volume is 0
+                volumeValueDisplay.textContent = Math.round(numericVolume * 100) + '%';
+                localStorage.setItem(LS_VOLUME_KEY, numericVolume); // Save setting
+            }
+        }
+
+        // Save current video position
+        function saveCurrentPosition() {
+            if (currentVideoFile && videoPlayer.currentTime > 0) {
+                const key = LS_POSITION_PREFIX + currentVideoFile.name;
+                localStorage.setItem(key, videoPlayer.currentTime);
+                // console.log(`Saved position ${videoPlayer.currentTime} for ${currentVideoFile.name}`);
+            }
+        }
+
+        // Load saved video position
+        function loadSavedPosition(filename) {
+            const key = LS_POSITION_PREFIX + filename;
+            const savedTime = localStorage.getItem(key);
+            if (savedTime !== null) {
+                 // Set position only after metadata is loaded to ensure duration is known
+                 videoPlayer.addEventListener('loadedmetadata', () => {
+                     const time = parseFloat(savedTime);
+                     if (!isNaN(time) && time < videoPlayer.duration) {
+                         videoPlayer.currentTime = time;
+                         // console.log(`Loaded position ${time} for ${filename}`);
+                     }
+                 }, { once: true }); // Ensure listener runs only once per load
+            }
+        }
+
+        // Format time in seconds to MM:SS or HH:MM:SS
+        function formatTime(seconds) {
+            const date = new Date(0);
+            date.setSeconds(seconds || 0);
+            const timeString = date.toISOString().substr(11, 8);
+            return timeString.startsWith('00:') ? timeString.substr(3) : timeString;
+        }
+
+
+        // --- Event Listeners ---
+
+        // Drag and Drop listeners (Video)
+        dropZone.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            dropZone.classList.add('drag-over');
+            errorMessage.classList.add('hidden');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+        dropZone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                handleVideoFile(files[0]); // Only handle the first dropped file as video
+            }
+        });
+
+        // Click to select file listener (Video)
+        dropZone.addEventListener('click', () => {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = 'video/*';
+            fileInput.style.display = 'none';
+            fileInput.addEventListener('change', (event) => {
+                const files = event.target.files;
+                if (files.length > 0) {
+                    handleVideoFile(files[0]);
+                }
+            });
+            document.body.appendChild(fileInput);
+            fileInput.click();
+            document.body.removeChild(fileInput);
+        });
+
+        // Speed slider listener
+        speedSlider.addEventListener('input', (event) => {
+            updatePlaybackSpeed(event.target.value);
+        });
+
+        // Volume slider listener
+        volumeSlider.addEventListener('input', (event) => {
+            updateVolume(event.target.value);
+        });
+
+        // PiP button listener
+        pipButton.addEventListener('click', async () => {
+            if (!document.pictureInPictureEnabled) return; // Guard clause
+
+            try {
+                if (document.pictureInPictureElement) {
+                    await document.exitPictureInPicture();
+                } else {
+                    await videoPlayer.requestPictureInPicture();
+                }
+            } catch (error) {
+                console.error("PiP Error:", error);
+                errorMessage.textContent = 'Could not enter/exit Picture-in-Picture mode.';
+                errorMessage.classList.remove('hidden');
+            }
+        });
+
+        // Load subtitle button listener
+        loadSubtitleButton.addEventListener('click', () => {
+            subtitleInput.click(); // Trigger hidden file input
+        });
+        subtitleInput.addEventListener('change', (event) => {
+             const files = event.target.files;
+             if (files.length > 0) {
+                 handleSubtitleFile(files[0]);
+             }
+             // Reset input value to allow loading the same file again
+             event.target.value = null;
+        });
+
+
+        // Video Player event listeners
+        videoPlayer.addEventListener('loadedmetadata', () => {
+            // Update file info with duration
+            if (currentVideoFile) {
+                 fileInfoDisplay.textContent = `File: ${currentVideoFile.name} | Duration: ${formatTime(videoPlayer.duration)}`;
+            }
+        });
+
+        // Save position periodically and on pause/seeking
+        videoPlayer.addEventListener('timeupdate', () => {
+             // Throttle saving to avoid excessive localStorage writes
+             // Basic throttling: save only every few seconds or on significant jumps
+             // A more robust solution would use requestAnimationFrame or a timer
+             if (Math.abs(videoPlayer.currentTime - (parseFloat(localStorage.getItem(LS_POSITION_PREFIX + currentVideoFile?.name)) || 0)) > 3) {
+                 saveCurrentPosition();
+             }
+        });
+        videoPlayer.addEventListener('pause', saveCurrentPosition);
+        videoPlayer.addEventListener('seeked', saveCurrentPosition);
+
+
+        // Keyboard Shortcuts Listener
+        document.addEventListener('keydown', (event) => {
+            const activeElement = document.activeElement;
+            const isInputFocused = activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA';
+
+            // Allow space even if slider is focused, but block others if regular input is focused
+            if (isInputFocused && activeElement.type !== 'range' && event.key !== ' ') {
+                 return;
+            }
+
+            if (videoContainer.classList.contains('hidden')) return; // No shortcuts if player hidden
+
+            let volumeChanged = false;
+            let seeked = false;
+
+            switch (event.key) {
+                case ' ': // Play/Pause
+                    if (!isInputFocused || activeElement.type === 'range') { // Allow space if slider focused
+                        event.preventDefault();
+                        if (videoPlayer.paused) videoPlayer.play();
+                        else videoPlayer.pause();
+                    }
+                    break;
+                case 'ArrowRight': // Seek forward
+                    if (!isInputFocused) { // Block if any input focused
+                       event.preventDefault();
+                       videoPlayer.currentTime += 5;
+                       seeked = true;
+                    }
+                    break;
+                case 'ArrowLeft': // Seek backward
+                    if (!isInputFocused) { // Block if any input focused
+                        event.preventDefault();
+                        videoPlayer.currentTime -= 5;
+                        seeked = true;
+                    }
+                    break;
+                case 'ArrowUp': // Increase volume
+                     event.preventDefault(); // Always prevent default for volume arrows
+                     const newVolUp = Math.min(1, Math.round((videoPlayer.volume + 0.1) * 10) / 10);
+                     if (videoPlayer.volume !== newVolUp) {
+                         updateVolume(newVolUp);
+                         volumeSlider.value = newVolUp; // Update slider visually
+                         volumeChanged = true;
+                     }
+                    break;
+                case 'ArrowDown': // Decrease volume
+                     event.preventDefault(); // Always prevent default for volume arrows
+                     const newVolDown = Math.max(0, Math.round((videoPlayer.volume - 0.1) * 10) / 10);
+                      if (videoPlayer.volume !== newVolDown) {
+                         updateVolume(newVolDown);
+                         volumeSlider.value = newVolDown; // Update slider visually
+                         volumeChanged = true;
+                     }
+                    break;
+                case 'f': // Fullscreen / PiP toggle (prioritize PiP if available)
+                    event.preventDefault();
+                    if (document.pictureInPictureEnabled) {
+                         pipButton.click(); // Trigger PiP button action
+                    } else if (!document.fullscreenElement) {
+                        (videoContainer.requestFullscreen || videoContainer.webkitRequestFullscreen || videoContainer.msRequestFullscreen).call(videoContainer);
+                    } else {
+                        if (document.exitFullscreen) document.exitFullscreen();
+                        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                        else if (document.msExitFullscreen) document.msExitFullscreen();
+                    }
+                    break;
+                case 'm': // Mute/Unmute
+                     event.preventDefault();
+                     videoPlayer.muted = !videoPlayer.muted;
+                     // Reflect mute state in volume slider/value if possible (e.g., disable slider or show icon)
+                     if(videoPlayer.muted) {
+                         volumeValueDisplay.textContent = "Muted";
+                     } else {
+                         updateVolume(videoPlayer.volume); // Restore display
+                     }
+                     // We don't save muted state, only volume level
+                    break;
+            }
+            // Save position immediately after seeking with keys
+            if (seeked) {
+                saveCurrentPosition();
+            }
+        });
+
+        // Clean up object URLs on window close
+        window.addEventListener('beforeunload', () => {
+            // Save final position before leaving
+            saveCurrentPosition();
+
+            // Clean up video source URL
+            if (videoPlayer.src && videoPlayer.src.startsWith('blob:')) {
+                URL.revokeObjectURL(videoPlayer.src);
+            }
+            // Clean up subtitle track URL
+             const trackElement = videoPlayer.querySelector('track');
+             if (trackElement && trackElement.src && trackElement.src.startsWith('blob:')) {
+                 URL.revokeObjectURL(trackElement.src);
+             }
+        });
+
+        // --- Run Initialization ---
+        initializePlayer();
+
+    </script>
+</body>
+</html>
